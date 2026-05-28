@@ -93,22 +93,56 @@ def export_csv(filepath, headers, rows):
 #  GUI APPLICATION
 # ─────────────────────────────────────────────
 
-DARK_BG   = "#0f1117"
-PANEL_BG  = "#1a1d27"
-CARD_BG   = "#22263a"
-ACCENT    = "#4f8ef7"
-ACCENT2   = "#a78bfa"
-SUCCESS   = "#34d399"
-WARNING   = "#fbbf24"
-TEXT      = "#e8eaf0"
-SUBTEXT   = "#8b90a8"
-BORDER    = "#2e3250"
-FONT_HEAD = ("Calibri", 22, "bold")
-FONT_SUB  = ("Calibri", 11, "italic")
-FONT_BODY = ("Calibri", 10)
-FONT_BTN  = ("Calibri", 10, "bold")
-FONT_LBL  = ("Calibri", 10)
-FONT_MONO = ("Calibri", 11)
+# ── Themes ───────────────────────────────────
+THEMES = {
+    "dark": {
+        "DARK_BG":  "#0f1117",
+        "PANEL_BG": "#1a1d27",
+        "CARD_BG":  "#22263a",
+        "ACCENT":   "#4f8ef7",
+        "ACCENT2":  "#a78bfa",
+        "SUCCESS":  "#34d399",
+        "WARNING":  "#fbbf24",
+        "TEXT":     "#e8eaf0",
+        "SUBTEXT":  "#8b90a8",
+        "BORDER":   "#2e3250",
+    },
+    "light": {
+        "DARK_BG":  "#f0f2f8",
+        "PANEL_BG": "#ffffff",
+        "CARD_BG":  "#e8ecf7",
+        "ACCENT":   "#1a5fd4",
+        "ACCENT2":  "#7c3aed",
+        "SUCCESS":  "#0d7f55",
+        "WARNING":  "#b45309",
+        "TEXT":     "#0f1117",
+        "SUBTEXT":  "#4b5068",
+        "BORDER":   "#c0c8e0",
+    },
+}
+
+# Active theme (mutable dict, updated on toggle)
+T = dict(THEMES["dark"])
+
+# Base font size (modified by scaling)
+BASE_FONT_SIZE = 10
+
+def _fonts(base=None):
+    """Return font tuple dict at the given base size."""
+    b = base if base is not None else BASE_FONT_SIZE
+    return {
+        "FONT_HEAD": ("Calibri", b + 12, "bold"),
+        "FONT_SUB":  ("Calibri", b + 1, "italic"),
+        "FONT_BODY": ("Calibri", b),
+        "FONT_BTN":  ("Calibri", b, "bold"),
+        "FONT_LBL":  ("Calibri", b),
+        "FONT_MONO": ("Calibri", b + 1),
+        "FONT_CARD": ("Calibri", b - 1, "bold"),
+        "FONT_STAT": ("Calibri", b - 1),
+        "FONT_BIG":  ("Calibri", b + 26, "bold"),
+    }
+
+FONTS = _fonts(BASE_FONT_SIZE)
 
 
 class MarkPredictorApp(tk.Tk):
@@ -117,7 +151,7 @@ class MarkPredictorApp(tk.Tk):
         self.title("Mark Predictor")
         self.geometry("860x680")
         self.minsize(780, 580)
-        self.configure(bg=DARK_BG)
+        self.configure(bg=T["DARK_BG"])
         self.resizable(True, True)
 
         # State
@@ -127,131 +161,387 @@ class MarkPredictorApp(tk.Tk):
         self.missing = []
         self.selected_missing = None
         self.last_prediction = None
+        self._current_theme = "dark"
+        self._font_size = BASE_FONT_SIZE
+        self._all_widgets = []   # (widget, role) for bulk re-theming
 
         self._build_ui()
+        self._bind_tooltips()
 
     # ── UI CONSTRUCTION ──────────────────────
 
     def _build_ui(self):
         # Header bar
-        header = tk.Frame(self, bg=PANEL_BG, height=70)
-        header.pack(fill='x', side='top')
-        header.pack_propagate(False)
+        self._header_frame = tk.Frame(self, bg=T["PANEL_BG"], height=70)
+        self._header_frame.pack(fill='x', side='top')
+        self._header_frame.pack_propagate(False)
 
-        tk.Label(header, text="MARK PREDICTOR", font=FONT_HEAD,
-                 bg=PANEL_BG, fg=TEXT).pack(side='left', padx=24, pady=14)
-        tk.Label(header, text="K-Nearest Neighbors (KNN)",
-                 font=FONT_SUB, bg=PANEL_BG, fg=SUBTEXT).pack(side='left', padx=4, pady=20)
+        self._title_lbl = tk.Label(
+            self._header_frame, text="MARK PREDICTOR",
+            font=FONTS["FONT_HEAD"], bg=T["PANEL_BG"], fg=T["TEXT"])
+        self._title_lbl.pack(side='left', padx=24, pady=14)
+
+        self._sub_lbl = tk.Label(
+            self._header_frame, text="K-Nearest Neighbors (KNN)",
+            font=FONTS["FONT_SUB"], bg=T["PANEL_BG"], fg=T["SUBTEXT"])
+        self._sub_lbl.pack(side='left', padx=4, pady=20)
+
+        # Accessibility controls in header (right side)
+        acc_frame = tk.Frame(self._header_frame, bg=T["PANEL_BG"])
+        acc_frame.pack(side='right', padx=16)
+        self._acc_frame = acc_frame
+
+        self._theme_btn = tk.Button(
+            acc_frame, text="☀ Light", font=FONTS["FONT_BTN"],
+            bg=T["ACCENT2"], fg=T["DARK_BG"], relief='flat',
+            cursor='hand2', padx=8, pady=3,
+            command=self._toggle_theme)
+        self._theme_btn.pack(side='right', padx=(6, 0))
+
+        self._font_down_btn = tk.Button(
+            acc_frame, text="A−", font=FONTS["FONT_BTN"],
+            bg=T["CARD_BG"], fg=T["TEXT"], relief='flat',
+            cursor='hand2', padx=8, pady=3,
+            command=self._font_decrease)
+        self._font_down_btn.pack(side='right', padx=(4, 0))
+
+        self._font_up_btn = tk.Button(
+            acc_frame, text="A+", font=FONTS["FONT_BTN"],
+            bg=T["CARD_BG"], fg=T["TEXT"], relief='flat',
+            cursor='hand2', padx=8, pady=3,
+            command=self._font_increase)
+        self._font_up_btn.pack(side='right', padx=(4, 0))
 
         # Status bar at bottom
         self.status_var = tk.StringVar(value="Load a CSV file to begin.")
-        status_bar = tk.Frame(self, bg=PANEL_BG, height=28)
-        status_bar.pack(fill='x', side='bottom')
-        status_bar.pack_propagate(False)
-        tk.Label(status_bar, textvariable=self.status_var, font=("Calibri", 9),
-                 bg=PANEL_BG, fg=SUBTEXT, anchor='w').pack(side='left', padx=14)
+        self._status_frame = tk.Frame(self, bg=T["PANEL_BG"], height=28)
+        self._status_frame.pack(fill='x', side='bottom')
+        self._status_frame.pack_propagate(False)
+        self._status_lbl = tk.Label(
+            self._status_frame, textvariable=self.status_var,
+            font=FONTS["FONT_STAT"], bg=T["PANEL_BG"], fg=T["SUBTEXT"], anchor='w')
+        self._status_lbl.pack(side='left', padx=14)
 
         # Thin accent line under header
-        tk.Frame(self, bg=ACCENT, height=2).pack(fill='x', side='top')
+        self._accent_line = tk.Frame(self, bg=T["ACCENT"], height=2)
+        self._accent_line.pack(fill='x', side='top')
 
         # Main body
-        body = tk.Frame(self, bg=DARK_BG)
-        body.pack(fill='both', expand=True, padx=20, pady=16)
+        self._body = tk.Frame(self, bg=T["DARK_BG"])
+        self._body.pack(fill='both', expand=True, padx=20, pady=16)
 
-        # Left column
-        left = tk.Frame(body, bg=DARK_BG, width=260)
-        left.pack(side='left', fill='y', padx=(0, 12))
-        left.pack_propagate(False)
+        # Left column — scrollable canvas so content survives large font sizes
+        left_outer = tk.Frame(self._body, bg=T["DARK_BG"], width=276)
+        left_outer.pack(side='left', fill='y', padx=(0, 12))
+        left_outer.pack_propagate(False)
+        self._left_outer = left_outer
+
+        self._left_canvas = tk.Canvas(
+            left_outer, bg=T["DARK_BG"], bd=0,
+            highlightthickness=0, width=258)
+        self._left_scrollbar = ttk.Scrollbar(
+            left_outer, orient='vertical', command=self._left_canvas.yview)
+        self._left_canvas.configure(yscrollcommand=self._left_scrollbar.set)
+
+        self._left_canvas.pack(side='left', fill='both', expand=True)
+        # scrollbar only appears when needed — managed via _update_left_scroll
+
+        self._left = tk.Frame(self._left_canvas, bg=T["DARK_BG"], width=258)
+        self._left_window = self._left_canvas.create_window(
+            (0, 0), window=self._left, anchor='nw')
+
+        # Resize canvas scroll region when inner frame changes size
+        self._left.bind('<Configure>', self._on_left_configure)
+        self._left_canvas.bind('<Configure>', self._on_left_canvas_configure)
+
+        # Mouse wheel scrolling on left panel
+        self._left_canvas.bind('<Enter>',
+            lambda e: self._left_canvas.bind_all('<MouseWheel>', self._on_left_scroll))
+        self._left_canvas.bind('<Leave>',
+            lambda e: self._left_canvas.unbind_all('<MouseWheel>'))
 
         # Right column
-        right = tk.Frame(body, bg=DARK_BG)
-        right.pack(side='left', fill='both', expand=True)
+        self._right = tk.Frame(self._body, bg=T["DARK_BG"])
+        self._right.pack(side='left', fill='both', expand=True)
 
-        self._build_left(left)
-        self._build_right(right)
+        self._build_left(self._left)
+        self._build_right(self._right)
 
     def _card(self, parent, title):
         """Create a labelled card frame."""
-        frame = tk.Frame(parent, bg=CARD_BG, bd=0, relief='flat',
-                         highlightbackground=BORDER, highlightthickness=1)
+        frame = tk.Frame(parent, bg=T["CARD_BG"], bd=0, relief='flat',
+                         highlightbackground=T["BORDER"], highlightthickness=1)
         frame.pack(fill='x', pady=(0, 10))
-        tk.Label(frame, text=title, font=("Calibri", 9, "bold"),
-                 bg=CARD_BG, fg=ACCENT2).pack(anchor='w', padx=12, pady=(10, 4))
-        tk.Frame(frame, bg=BORDER, height=1).pack(fill='x', padx=12)
+        lbl = tk.Label(frame, text=title, font=FONTS["FONT_CARD"],
+                       bg=T["CARD_BG"], fg=T["ACCENT2"])
+        lbl.pack(anchor='w', padx=12, pady=(10, 4))
+        div = tk.Frame(frame, bg=T["BORDER"], height=1)
+        div.pack(fill='x', padx=12)
+        self._all_widgets += [
+            (frame, "card"), (lbl, "card_title"), (div, "border")
+        ]
         return frame
 
-    def _btn(self, parent, text, cmd, color=ACCENT, width=22):
+    def _btn(self, parent, text, cmd, color=None, width=22, tooltip=None):
+        c = color or T["ACCENT"]
         b = tk.Button(parent, text=text, command=cmd,
-                      font=FONT_BTN, bg=color, fg=DARK_BG,
-                      activebackground=TEXT, activeforeground=DARK_BG,
+                      font=FONTS["FONT_BTN"], bg=c, fg=T["DARK_BG"],
+                      activebackground=T["TEXT"], activeforeground=T["DARK_BG"],
                       relief='flat', cursor='hand2', width=width, pady=6)
         b.pack(padx=12, pady=(6, 10), fill='x')
+        if tooltip:
+            self._add_tooltip(b, tooltip)
         return b
 
     def _build_left(self, parent):
         # File card
         fc = self._card(parent, "① DATA FILE")
-        tk.Label(fc, text="No file loaded", font=FONT_LBL,
-                 bg=CARD_BG, fg=SUBTEXT, wraplength=220, justify='left',
-                 name='file_label').pack(anchor='w', padx=12, pady=6)
-        self.file_label = fc.children['file_label']
-        self._btn(fc, "[ LOAD CSV ]", self._load_file)
+        self.file_label = tk.Label(fc, text="No file loaded", font=FONTS["FONT_LBL"],
+                                   bg=T["CARD_BG"], fg=T["SUBTEXT"],
+                                   wraplength=220, justify='left')
+        self.file_label.pack(anchor='w', padx=12, pady=6)
+        self._all_widgets.append((self.file_label, "subtext"))
+        self._load_btn = self._btn(fc, "[ LOAD CSV ]", self._load_file,
+                                   color=T["ACCENT"],
+                                   tooltip="Load a student CSV data file")
 
         # Missing marks card
         mc = self._card(parent, "② MISSING MARKS")
         self.missing_var = tk.StringVar(value="— none loaded —")
-        tk.Label(mc, textvariable=self.missing_var, font=FONT_LBL,
-                 bg=CARD_BG, fg=SUBTEXT).pack(anchor='w', padx=12, pady=6)
+        miss_lbl = tk.Label(mc, textvariable=self.missing_var, font=FONTS["FONT_LBL"],
+                            bg=T["CARD_BG"], fg=T["SUBTEXT"])
+        miss_lbl.pack(anchor='w', padx=12, pady=6)
+        self._all_widgets.append((miss_lbl, "subtext"))
 
-        self.missing_list = tk.Listbox(mc, font=FONT_BODY, bg=PANEL_BG, fg=TEXT,
-                                       selectbackground=ACCENT, selectforeground=DARK_BG,
+        self.missing_list = tk.Listbox(mc, font=FONTS["FONT_BODY"],
+                                       bg=T["PANEL_BG"], fg=T["TEXT"],
+                                       selectbackground=T["ACCENT"],
+                                       selectforeground=T["DARK_BG"],
                                        relief='flat', bd=0, height=6,
                                        highlightthickness=0, activestyle='none')
         self.missing_list.pack(fill='x', padx=12, pady=(0, 8))
         self.missing_list.bind('<<ListboxSelect>>', self._on_select)
+        self._all_widgets.append((self.missing_list, "listbox"))
 
         # K selector card
         kc = self._card(parent, "③ KNN SETTINGS")
-        tk.Label(kc, text="Neighbours (k):", font=FONT_LBL,
-                 bg=CARD_BG, fg=TEXT).pack(anchor='w', padx=12, pady=(6, 2))
+        k_lbl = tk.Label(kc, text="Neighbours (k):", font=FONTS["FONT_LBL"],
+                         bg=T["CARD_BG"], fg=T["TEXT"])
+        k_lbl.pack(anchor='w', padx=12, pady=(6, 2))
+        self._all_widgets.append((k_lbl, "text"))
         self.k_var = tk.IntVar(value=5)
-        k_frame = tk.Frame(kc, bg=CARD_BG)
+        k_frame = tk.Frame(kc, bg=T["CARD_BG"])
         k_frame.pack(anchor='w', padx=12, pady=(0, 8))
+        self._all_widgets.append((k_frame, "card"))
         for k in [3, 5, 7]:
-            tk.Radiobutton(k_frame, text=str(k), variable=self.k_var, value=k,
-                           font=FONT_LBL, bg=CARD_BG, fg=TEXT,
-                           selectcolor=DARK_BG, activebackground=CARD_BG).pack(side='left', padx=4)
+            rb = tk.Radiobutton(k_frame, text=str(k), variable=self.k_var, value=k,
+                                font=FONTS["FONT_LBL"], bg=T["CARD_BG"], fg=T["TEXT"],
+                                selectcolor=T["DARK_BG"], activebackground=T["CARD_BG"])
+            rb.pack(side='left', padx=4)
+            self._all_widgets.append((rb, "radiobutton"))
 
-        self._btn(parent, "[ PREDICT MARK ]", self._predict, color=SUCCESS, width=22)
-        self._btn(parent, "[ PREDICT ALL ]", self._predict_all, color=ACCENT2, width=22)
-        self._btn(parent, "[ EXPORT CSV ]", self._export, color=WARNING, width=22)
+        self._predict_btn  = self._btn(parent, "[ PREDICT MARK ]", self._predict,
+                                       color=T["SUCCESS"],
+                                       tooltip="Predict the selected missing mark using KNN")
+        self._predictall_btn = self._btn(parent, "[ PREDICT ALL ]", self._predict_all,
+                                         color=T["ACCENT2"],
+                                         tooltip="Automatically predict every missing mark in the dataset")
+        self._export_btn   = self._btn(parent, "[ EXPORT CSV ]", self._export,
+                                       color=T["WARNING"],
+                                       tooltip="Save the updated data with predicted marks to a new CSV file")
 
     def _build_right(self, parent):
         # Student info card
         si = self._card(parent, "SELECTED STUDENT")
         self.student_info_var = tk.StringVar(value="Select a missing mark from the list.")
-        tk.Label(si, textvariable=self.student_info_var, font=FONT_MONO,
-                 bg=CARD_BG, fg=TEXT, justify='left', wraplength=520,
-                 anchor='w').pack(anchor='w', padx=12, pady=10)
+        self._student_info_lbl = tk.Label(
+            si, textvariable=self.student_info_var, font=FONTS["FONT_MONO"],
+            bg=T["CARD_BG"], fg=T["TEXT"], justify='left', wraplength=520, anchor='w')
+        self._student_info_lbl.pack(anchor='w', padx=12, pady=10)
+        self._all_widgets.append((self._student_info_lbl, "text"))
 
         # Results card
         rc = self._card(parent, "PREDICTION RESULT")
         self.result_var = tk.StringVar(value="—")
-        tk.Label(rc, textvariable=self.result_var, font=("Calibri", 36, "bold"),
-                 bg=CARD_BG, fg=SUCCESS).pack(pady=(10, 2))
+        self._result_big_lbl = tk.Label(
+            rc, textvariable=self.result_var,
+            font=FONTS["FONT_BIG"], bg=T["CARD_BG"], fg=T["SUCCESS"])
+        self._result_big_lbl.pack(pady=(10, 2))
         self.result_sub_var = tk.StringVar(value="Run a prediction to see results.")
-        tk.Label(rc, textvariable=self.result_sub_var, font=FONT_LBL,
-                 bg=CARD_BG, fg=SUBTEXT, wraplength=520, justify='left').pack(padx=12, pady=(0, 10))
+        self._result_sub_lbl = tk.Label(
+            rc, textvariable=self.result_sub_var, font=FONTS["FONT_LBL"],
+            bg=T["CARD_BG"], fg=T["SUBTEXT"], wraplength=520, justify='left')
+        self._result_sub_lbl.pack(padx=12, pady=(0, 10))
+        self._all_widgets += [
+            (self._result_big_lbl, "success"),
+            (self._result_sub_lbl, "subtext"),
+        ]
 
         # Neighbours / log card
         lc = self._card(parent, "ANALYSIS LOG")
-        self.log = tk.Text(lc, font=FONT_BODY, bg=PANEL_BG, fg=TEXT,
+        self.log = tk.Text(lc, font=FONTS["FONT_BODY"], bg=T["PANEL_BG"], fg=T["TEXT"],
                            relief='flat', bd=0, height=14, state='disabled',
                            highlightthickness=0, wrap='word')
         scroll = ttk.Scrollbar(lc, orient='vertical', command=self.log.yview)
         self.log.configure(yscrollcommand=scroll.set)
         self.log.pack(side='left', fill='both', expand=True, padx=(12, 0), pady=8)
         scroll.pack(side='right', fill='y', pady=8, padx=(0, 8))
+        self._all_widgets.append((self.log, "log"))
+
+    # ── LEFT PANEL SCROLL HELPERS ────────────
+
+    def _on_left_configure(self, event):
+        """Update scroll region and show/hide scrollbar as needed."""
+        self._left_canvas.configure(
+            scrollregion=self._left_canvas.bbox('all'))
+        self._update_left_scroll()
+
+    def _on_left_canvas_configure(self, event):
+        """Keep inner frame width in sync with canvas width."""
+        self._left_canvas.itemconfig(self._left_window, width=event.width)
+        self._update_left_scroll()
+
+    def _update_left_scroll(self):
+        """Show scrollbar only when content is taller than the canvas."""
+        canvas_h  = self._left_canvas.winfo_height()
+        content_h = self._left.winfo_reqheight()
+        if content_h > canvas_h:
+            self._left_scrollbar.pack(side='right', fill='y')
+        else:
+            self._left_scrollbar.pack_forget()
+
+    def _on_left_scroll(self, event):
+        self._left_canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+
+    # ── TOOLTIPS ─────────────────────────────
+
+    def _add_tooltip(self, widget, text):
+        """Attach a hover tooltip to a widget."""
+        tip_win = [None]
+
+        def show(event):
+            if tip_win[0]:
+                return
+            x = widget.winfo_rootx() + 10
+            y = widget.winfo_rooty() + widget.winfo_height() + 4
+            tw = tk.Toplevel(self)
+            tw.wm_overrideredirect(True)
+            tw.wm_geometry(f"+{x}+{y}")
+            lbl = tk.Label(tw, text=text, font=FONTS["FONT_STAT"],
+                           bg=T["PANEL_BG"], fg=T["TEXT"],
+                           relief='flat', bd=0, padx=8, pady=4,
+                           highlightbackground=T["BORDER"], highlightthickness=1)
+            lbl.pack()
+            tip_win[0] = tw
+
+        def hide(event):
+            if tip_win[0]:
+                tip_win[0].destroy()
+                tip_win[0] = None
+
+        widget.bind("<Enter>", show)
+        widget.bind("<Leave>", hide)
+
+    def _bind_tooltips(self):
+        """Tooltips for the accessibility buttons in the header."""
+        self._add_tooltip(self._font_up_btn,   "Increase font size")
+        self._add_tooltip(self._font_down_btn,  "Decrease font size")
+        self._add_tooltip(self._theme_btn,      "Toggle light / dark mode")
+
+    # ── THEME & FONT SCALING ─────────────────
+
+    def _toggle_theme(self):
+        self._current_theme = "light" if self._current_theme == "dark" else "dark"
+        T.update(THEMES[self._current_theme])
+        self._theme_btn.config(
+            text="🌙 Dark" if self._current_theme == "light" else "☀ Light",
+            bg=T["ACCENT2"], fg=T["DARK_BG"]
+        )
+        self._apply_theme()
+
+    def _font_increase(self):
+        if self._font_size < 18:
+            self._font_size += 1
+            FONTS.update(_fonts(self._font_size))
+            self._apply_theme()
+
+    def _font_decrease(self):
+        if self._font_size > 8:
+            self._font_size -= 1
+            FONTS.update(_fonts(self._font_size))
+            self._apply_theme()
+
+    def _apply_theme(self):
+        """Re-apply current theme colours and fonts to every tracked widget."""
+        self.configure(bg=T["DARK_BG"])
+        self._header_frame.configure(bg=T["PANEL_BG"])
+        self._title_lbl.configure(bg=T["PANEL_BG"], fg=T["TEXT"],    font=FONTS["FONT_HEAD"])
+        self._sub_lbl.configure(  bg=T["PANEL_BG"], fg=T["SUBTEXT"], font=FONTS["FONT_SUB"])
+        self._acc_frame.configure(bg=T["PANEL_BG"])
+        self._accent_line.configure(bg=T["ACCENT"])
+        self._body.configure(bg=T["DARK_BG"])
+        self._left_outer.configure(bg=T["DARK_BG"])
+        self._left_canvas.configure(bg=T["DARK_BG"])
+        self._left.configure(bg=T["DARK_BG"])
+        self._right.configure(bg=T["DARK_BG"])
+        self._status_frame.configure(bg=T["PANEL_BG"])
+        self._status_lbl.configure(bg=T["PANEL_BG"], fg=T["SUBTEXT"], font=FONTS["FONT_STAT"])
+
+        # Accessibility buttons
+        for btn, lbl_text in [
+            (self._font_up_btn,   "A+"),
+            (self._font_down_btn, "A−"),
+        ]:
+            btn.configure(bg=T["CARD_BG"], fg=T["TEXT"], font=FONTS["FONT_BTN"])
+
+        # Main action buttons
+        self._load_btn.configure(      bg=T["ACCENT"],  fg=T["DARK_BG"], font=FONTS["FONT_BTN"])
+        self._predict_btn.configure(   bg=T["SUCCESS"], fg=T["DARK_BG"], font=FONTS["FONT_BTN"])
+        self._predictall_btn.configure(bg=T["ACCENT2"], fg=T["DARK_BG"], font=FONTS["FONT_BTN"])
+        self._export_btn.configure(    bg=T["WARNING"],  fg=T["DARK_BG"], font=FONTS["FONT_BTN"])
+
+        # Result big label
+        self._result_big_lbl.configure(bg=T["CARD_BG"], fg=T["SUCCESS"], font=FONTS["FONT_BIG"])
+        self._result_sub_lbl.configure(bg=T["CARD_BG"], fg=T["SUBTEXT"], font=FONTS["FONT_LBL"])
+        self._student_info_lbl.configure(bg=T["CARD_BG"], fg=T["TEXT"],  font=FONTS["FONT_MONO"])
+
+        # Listbox
+        self.missing_list.configure(
+            bg=T["PANEL_BG"], fg=T["TEXT"], font=FONTS["FONT_BODY"],
+            selectbackground=T["ACCENT"], selectforeground=T["DARK_BG"])
+
+        # Log text widget
+        self.log.configure(bg=T["PANEL_BG"], fg=T["TEXT"], font=FONTS["FONT_BODY"])
+
+        # File label (preserve success colour if file loaded)
+        if self.filepath:
+            self.file_label.configure(bg=T["CARD_BG"], fg=T["SUCCESS"], font=FONTS["FONT_LBL"])
+        else:
+            self.file_label.configure(bg=T["CARD_BG"], fg=T["SUBTEXT"], font=FONTS["FONT_LBL"])
+
+        # Bulk-tracked widgets
+        role_map = {
+            "card":       {"bg": T["CARD_BG"]},
+            "card_title": {"bg": T["CARD_BG"], "fg": T["ACCENT2"], "font": FONTS["FONT_CARD"]},
+            "border":     {"bg": T["BORDER"]},
+            "text":       {"bg": T["CARD_BG"], "fg": T["TEXT"],    "font": FONTS["FONT_LBL"]},
+            "subtext":    {"bg": T["CARD_BG"], "fg": T["SUBTEXT"], "font": FONTS["FONT_LBL"]},
+            "success":    {"bg": T["CARD_BG"], "fg": T["SUCCESS"]},
+            "listbox":    {},   # handled above
+            "log":        {},   # handled above
+            "radiobutton": {
+                "bg": T["CARD_BG"], "fg": T["TEXT"],
+                "selectcolor": T["DARK_BG"], "activebackground": T["CARD_BG"],
+                "font": FONTS["FONT_LBL"]
+            },
+        }
+        for widget, role in self._all_widgets:
+            props = role_map.get(role, {})
+            if props:
+                try:
+                    widget.configure(**props)
+                except tk.TclError:
+                    pass
 
     # ── ACTIONS ──────────────────────────────
 
@@ -289,7 +579,7 @@ class MarkPredictorApp(tk.Tk):
 
         self.filepath = path
         fname = os.path.basename(path)
-        self.file_label.config(text=fname, fg=SUCCESS)
+        self.file_label.config(text=fname, fg=T["SUCCESS"])
         self._set_status(f"Loaded: {fname}  |  {len(self.rows)} students, {len(self.headers)} columns")
 
         self.missing = find_missing(self.rows, self.headers)
