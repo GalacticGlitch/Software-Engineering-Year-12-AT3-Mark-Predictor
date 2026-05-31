@@ -41,6 +41,172 @@ def knn_predict(train_X, train_y, query, k=5):
 
 
 # ─────────────────────────────────────────────
+#  LINEAR REGRESSION (from scratch)
+# ─────────────────────────────────────────────
+
+def linear_regression_predict(train_X, train_y, query):
+    """
+    Multivariate Linear Regression using the Normal Equation:
+        w = (X^T X)^-1 X^T y
+    Returns (prediction, coefficients, intercept).
+    """
+    n = len(train_X)
+    p = len(train_X[0])
+
+    # Add bias column (intercept) — prepend 1 to each row
+    X = [[1.0] + list(row) for row in train_X]
+    q = [1.0] + list(query)
+
+    # X^T X  (shape: (p+1) x (p+1))
+    def mat_mul(A, B):
+        rows_A, cols_A = len(A), len(A[0])
+        cols_B = len(B[0])
+        return [[sum(A[i][k] * B[k][j] for k in range(cols_A))
+                 for j in range(cols_B)] for i in range(rows_A)]
+
+    def transpose(M):
+        return [[M[j][i] for j in range(len(M))] for i in range(len(M[0]))]
+
+    def mat_vec(M, v):
+        return [sum(M[i][j] * v[j] for j in range(len(v))) for i in range(len(M))]
+
+    def gauss_jordan_inverse(M):
+        """Invert a square matrix via Gauss-Jordan elimination."""
+        n = len(M)
+        aug = [M[i][:] + [1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
+        for col in range(n):
+            # Pivot
+            max_row = max(range(col, n), key=lambda r: abs(aug[r][col]))
+            aug[col], aug[max_row] = aug[max_row], aug[col]
+            if abs(aug[col][col]) < 1e-12:
+                raise ValueError("Matrix is singular — cannot invert (features may be perfectly correlated).")
+            pivot = aug[col][col]
+            aug[col] = [v / pivot for v in aug[col]]
+            for r in range(n):
+                if r != col:
+                    factor = aug[r][col]
+                    aug[r] = [aug[r][c] - factor * aug[col][c] for c in range(2 * n)]
+        return [row[n:] for row in aug]
+
+    Xt = transpose(X)
+    XtX = mat_mul(Xt, X)
+    Xty = mat_vec(Xt, train_y)
+
+    try:
+        XtX_inv = gauss_jordan_inverse(XtX)
+    except ValueError:
+        # Fallback: simple mean if singular
+        return round(sum(train_y) / len(train_y), 1), [], 0.0
+
+    weights = mat_vec(XtX_inv, Xty)   # [intercept, w1, w2, ...]
+    intercept = weights[0]
+    coefficients = weights[1:]
+    prediction = sum(w * v for w, v in zip(weights, q))
+    prediction = max(0.0, min(100.0, prediction))
+    return round(prediction, 1), coefficients, intercept
+
+
+# ─────────────────────────────────────────────
+#  DECISION TREE (from scratch)
+# ─────────────────────────────────────────────
+
+class DTNode:
+    """A node in the Decision Tree."""
+    def __init__(self):
+        self.feature_idx = None
+        self.threshold   = None
+        self.left        = None
+        self.right       = None
+        self.value       = None   # set for leaf nodes
+
+    def is_leaf(self):
+        return self.value is not None
+
+
+def _dt_mse(y):
+    if not y:
+        return 0.0
+    mean = sum(y) / len(y)
+    return sum((v - mean) ** 2 for v in y) / len(y)
+
+
+def _dt_best_split(X, y):
+    best_mse, best_feat, best_thresh = float('inf'), None, None
+    n = len(y)
+    for feat in range(len(X[0])):
+        values = sorted(set(row[feat] for row in X))
+        thresholds = [(values[i] + values[i+1]) / 2 for i in range(len(values) - 1)]
+        for thresh in thresholds:
+            left_y  = [y[i] for i in range(n) if X[i][feat] <= thresh]
+            right_y = [y[i] for i in range(n) if X[i][feat] >  thresh]
+            if not left_y or not right_y:
+                continue
+            mse = (len(left_y) * _dt_mse(left_y) + len(right_y) * _dt_mse(right_y)) / n
+            if mse < best_mse:
+                best_mse, best_feat, best_thresh = mse, feat, thresh
+    return best_feat, best_thresh
+
+
+def _dt_build(X, y, depth, max_depth, min_samples):
+    node = DTNode()
+    if depth >= max_depth or len(y) <= min_samples or len(set(y)) == 1:
+        node.value = round(sum(y) / len(y), 1)
+        return node
+    feat, thresh = _dt_best_split(X, y)
+    if feat is None:
+        node.value = round(sum(y) / len(y), 1)
+        return node
+    node.feature_idx = feat
+    node.threshold   = thresh
+    left_idx  = [i for i in range(len(y)) if X[i][feat] <= thresh]
+    right_idx = [i for i in range(len(y)) if X[i][feat] >  thresh]
+    node.left  = _dt_build([X[i] for i in left_idx],  [y[i] for i in left_idx],
+                            depth + 1, max_depth, min_samples)
+    node.right = _dt_build([X[i] for i in right_idx], [y[i] for i in right_idx],
+                            depth + 1, max_depth, min_samples)
+    return node
+
+
+def _dt_predict_one(node, x):
+    if node.is_leaf():
+        return node.value
+    if x[node.feature_idx] <= node.threshold:
+        return _dt_predict_one(node.left, x)
+    return _dt_predict_one(node.right, x)
+
+
+def _dt_describe(node, feature_cols, depth=0, lines=None):
+    """Recursively build a human-readable tree description."""
+    if lines is None:
+        lines = []
+    indent = "  " * depth
+    if node.is_leaf():
+        lines.append(f"{indent}→ Predict: {node.value}")
+    else:
+        fname = feature_cols[node.feature_idx] if node.feature_idx < len(feature_cols) else f"F{node.feature_idx}"
+        lines.append(f"{indent}Split: {fname} ≤ {node.threshold:.1f}")
+        lines.append(f"{indent}  [yes]")
+        _dt_describe(node.left,  feature_cols, depth + 2, lines)
+        lines.append(f"{indent}  [no]")
+        _dt_describe(node.right, feature_cols, depth + 2, lines)
+    return lines
+
+
+def decision_tree_predict(train_X, train_y, query, feature_cols,
+                          max_depth=4, min_samples=2):
+    """
+    Build a Decision Tree on training data and predict for query.
+    Returns (prediction, tree_root, tree_description_lines).
+    """
+    root = _dt_build(train_X, train_y, depth=0,
+                     max_depth=max_depth, min_samples=min_samples)
+    raw = _dt_predict_one(root, query)
+    prediction = max(0.0, min(100.0, raw))
+    desc = _dt_describe(root, feature_cols)
+    return round(prediction, 1), root, desc
+
+
+# ─────────────────────────────────────────────
 #  DATA HANDLING
 # ─────────────────────────────────────────────
 
@@ -181,11 +347,6 @@ class MarkPredictorApp(tk.Tk):
             font=FONTS["FONT_HEAD"], bg=T["PANEL_BG"], fg=T["TEXT"])
         self._title_lbl.pack(side='left', padx=24, pady=14)
 
-        self._sub_lbl = tk.Label(
-            self._header_frame, text="K-Nearest Neighbors (KNN)",
-            font=FONTS["FONT_SUB"], bg=T["PANEL_BG"], fg=T["SUBTEXT"])
-        self._sub_lbl.pack(side='left', padx=4, pady=20)
-
         # Accessibility controls in header (right side)
         acc_frame = tk.Frame(self._header_frame, bg=T["PANEL_BG"])
         acc_frame.pack(side='right', padx=16)
@@ -323,14 +484,31 @@ class MarkPredictorApp(tk.Tk):
         self.missing_list.bind('<<ListboxSelect>>', self._on_select)
         self._all_widgets.append((self.missing_list, "listbox"))
 
-        # K selector card
-        kc = self._card(parent, "③ KNN SETTINGS")
-        k_lbl = tk.Label(kc, text="Neighbours (k):", font=FONTS["FONT_LBL"],
+        # Algorithm selector card
+        ac = self._card(parent, "③ ALGORITHM")
+        self.algo_var = tk.StringVar(value="KNN")
+        self._algo_radios = []
+        algo_frame = tk.Frame(ac, bg=T["CARD_BG"])
+        algo_frame.pack(anchor='w', padx=12, pady=(4, 8))
+        self._all_widgets.append((algo_frame, "card"))
+        for algo in ["KNN", "Linear Regression", "Decision Tree"]:
+            rb = tk.Radiobutton(algo_frame, text=algo, variable=self.algo_var,
+                                value=algo, font=FONTS["FONT_LBL"],
+                                bg=T["CARD_BG"], fg=T["TEXT"],
+                                selectcolor=T["DARK_BG"], activebackground=T["CARD_BG"],
+                                command=self._on_algo_change)
+            rb.pack(anchor='w', padx=4, pady=1)
+            self._all_widgets.append((rb, "radiobutton"))
+            self._algo_radios.append(rb)
+
+        # K selector card (KNN only)
+        self._knn_card = self._card(parent, "④ KNN SETTINGS")
+        k_lbl = tk.Label(self._knn_card, text="Neighbours (k):", font=FONTS["FONT_LBL"],
                          bg=T["CARD_BG"], fg=T["TEXT"])
         k_lbl.pack(anchor='w', padx=12, pady=(6, 2))
         self._all_widgets.append((k_lbl, "text"))
         self.k_var = tk.IntVar(value=5)
-        k_frame = tk.Frame(kc, bg=T["CARD_BG"])
+        k_frame = tk.Frame(self._knn_card, bg=T["CARD_BG"])
         k_frame.pack(anchor='w', padx=12, pady=(0, 8))
         self._all_widgets.append((k_frame, "card"))
         for k in [3, 5, 7]:
@@ -339,6 +517,24 @@ class MarkPredictorApp(tk.Tk):
                                 selectcolor=T["DARK_BG"], activebackground=T["CARD_BG"])
             rb.pack(side='left', padx=4)
             self._all_widgets.append((rb, "radiobutton"))
+
+        # Decision Tree settings card (DT only)
+        self._dt_card = self._card(parent, "④ TREE SETTINGS")
+        dt_depth_lbl = tk.Label(self._dt_card, text="Max depth:", font=FONTS["FONT_LBL"],
+                                bg=T["CARD_BG"], fg=T["TEXT"])
+        dt_depth_lbl.pack(anchor='w', padx=12, pady=(6, 2))
+        self._all_widgets.append((dt_depth_lbl, "text"))
+        self.dt_depth_var = tk.IntVar(value=4)
+        dt_frame = tk.Frame(self._dt_card, bg=T["CARD_BG"])
+        dt_frame.pack(anchor='w', padx=12, pady=(0, 8))
+        self._all_widgets.append((dt_frame, "card"))
+        for d in [2, 3, 4]:
+            rb = tk.Radiobutton(dt_frame, text=str(d), variable=self.dt_depth_var, value=d,
+                                font=FONTS["FONT_LBL"], bg=T["CARD_BG"], fg=T["TEXT"],
+                                selectcolor=T["DARK_BG"], activebackground=T["CARD_BG"])
+            rb.pack(side='left', padx=4)
+            self._all_widgets.append((rb, "radiobutton"))
+        self._dt_card.pack_forget()  # hidden by default
 
         self._predict_btn  = self._btn(parent, "[ PREDICT MARK ]", self._predict,
                                        color=T["SUCCESS"],
@@ -619,14 +815,37 @@ class MarkPredictorApp(tk.Tk):
             f"Known marks:  {known_str or 'none'}"
         )
         self.result_var.set("—")
-        self.result_sub_var.set("Press [ PREDICT MARK ] to run KNN prediction.")
+        self.result_sub_var.set(f"Press [ PREDICT MARK ] to run {self.algo_var.get()} prediction.")
         self._set_status(f"Selected: {name} → {col}")
+
+    def _on_algo_change(self):
+        """Show/hide settings cards based on selected algorithm."""
+        algo = self.algo_var.get()
+        if algo == "KNN":
+            self._knn_card.pack(fill='x', pady=(0, 10),
+                                before=self._predict_btn)
+            self._dt_card.pack_forget()
+        elif algo == "Decision Tree":
+            self._dt_card.pack(fill='x', pady=(0, 10),
+                               before=self._predict_btn)
+            self._knn_card.pack_forget()
+        else:
+            # Linear Regression — no extra settings needed
+            self._knn_card.pack_forget()
+            self._dt_card.pack_forget()
+
+        # Update predict button tooltip
+        tips = {
+            "KNN": "Predict using K-Nearest Neighbours",
+            "Linear Regression": "Predict using Linear Regression",
+            "Decision Tree": "Predict using a Decision Tree",
+        }
+        self._add_tooltip(self._predict_btn, tips.get(algo, "Predict the missing mark"))
 
     def _run_single_prediction(self, row_i, name, col, k):
         """
-        Core KNN prediction logic for one missing mark.
-        Returns (prediction, neighbours, train_names, feature_cols, query, class_avg)
-        or raises ValueError with a user-facing message.
+        Dispatch to the selected algorithm and return a unified result dict.
+        Keys: prediction, algo, feature_cols, query, class_avg, extras (algo-specific)
         """
         assessment_cols = [c for c in self.headers if c not in ('StudentID', 'Name')]
         target_row = self.rows[row_i]
@@ -639,7 +858,7 @@ class MarkPredictorApp(tk.Tk):
             valid, parsed = validate_mark(val, fc) if val else (False, None)
             target_features_raw.append(parsed if valid else None)
 
-        # Build training set from students who have the target col filled in
+        # Build training set
         train_X, train_y, train_names = [], [], []
         for i, row in enumerate(self.rows):
             if i == row_i:
@@ -662,25 +881,23 @@ class MarkPredictorApp(tk.Tk):
             train_y.append(y_val)
             train_names.append(row.get('Name', f'Row {i}'))
 
-        if len(train_X) < k:
+        min_needed = k if self.algo_var.get() == "KNN" else 3
+        if len(train_X) < min_needed:
             raise ValueError(
-                f"Need at least {k} students with a known '{col}' mark. "
-                f"Only {len(train_X)} found. Try reducing k."
+                f"Need at least {min_needed} students with a known '{col}' mark. "
+                f"Only {len(train_X)} found."
             )
 
-        # Query vector for the target student
+        # Query vector
         query = []
-        for j, fc in enumerate(feature_cols):
+        for j in range(len(feature_cols)):
             if target_features_raw[j] is not None:
                 query.append(target_features_raw[j])
             else:
                 vals = [train_X[r][j] for r in range(len(train_X))]
                 query.append(sum(vals) / len(vals))
 
-        prediction, neighbours = knn_predict(train_X, train_y, query, k=k)
-        prediction = max(0, min(100, prediction))
-
-        # Class average for the target column (excluding target student)
+        # Class average
         all_vals = []
         for i, row in enumerate(self.rows):
             if i == row_i:
@@ -691,7 +908,35 @@ class MarkPredictorApp(tk.Tk):
                 all_vals.append(parsed)
         class_avg = round(sum(all_vals) / len(all_vals), 1) if all_vals else 0
 
-        return prediction, neighbours, train_names, feature_cols, query, class_avg
+        algo = self.algo_var.get()
+        extras = {}
+
+        if algo == "KNN":
+            prediction, neighbours = knn_predict(train_X, train_y, query, k=k)
+            prediction = max(0, min(100, prediction))
+            extras = {"neighbours": neighbours, "train_names": train_names}
+
+        elif algo == "Linear Regression":
+            prediction, coefficients, intercept = linear_regression_predict(
+                train_X, train_y, query)
+            extras = {"coefficients": coefficients, "intercept": intercept,
+                      "feature_cols": feature_cols}
+
+        elif algo == "Decision Tree":
+            max_depth = self.dt_depth_var.get()
+            prediction, tree_root, tree_desc = decision_tree_predict(
+                train_X, train_y, query, feature_cols, max_depth=max_depth)
+            extras = {"tree_desc": tree_desc}
+
+        return {
+            "prediction": prediction,
+            "algo": algo,
+            "feature_cols": feature_cols,
+            "query": query,
+            "class_avg": class_avg,
+            "train_names": train_names,
+            "extras": extras,
+        }
 
     def _predict(self):
         if not self.selected_missing:
@@ -702,8 +947,7 @@ class MarkPredictorApp(tk.Tk):
         k = self.k_var.get()
 
         try:
-            prediction, neighbours, train_names, feature_cols, query, class_avg = \
-                self._run_single_prediction(row_i, name, col, k)
+            result = self._run_single_prediction(row_i, name, col, k)
         except ValueError as e:
             messagebox.showerror("Insufficient Data", str(e))
             return
@@ -711,73 +955,114 @@ class MarkPredictorApp(tk.Tk):
             messagebox.showerror("Prediction Error", str(e))
             return
 
-        # Store prediction
+        prediction = result["prediction"]
+        algo       = result["algo"]
+        class_avg  = result["class_avg"]
+        query      = result["query"]
+        feature_cols = result["feature_cols"]
+        extras     = result["extras"]
+
         self.rows[row_i][col] = str(prediction)
         self.last_prediction = (row_i, col, prediction)
 
-        # Update UI
         self.result_var.set(f"{prediction}")
         self.result_sub_var.set(
-            f"Predicted {col} for {name}   |   "
-            f"Class average: {class_avg}   |   "
-            f"k = {k} neighbours used"
+            f"[{algo}]  Predicted {col} for {name}   |   Class average: {class_avg}"
         )
 
-        # Log
         self._clear_log()
-        self._log(f"═══ KNN PREDICTION REPORT ═══")
+        self._log(f"═══ {algo.upper()} PREDICTION REPORT ═══")
         self._log(f"Student     : {name}")
         self._log(f"Target col  : {col}")
-        self._log(f"k           : {k}")
+        self._log(f"Algorithm   : {algo}")
         self._log(f"Feature cols: {', '.join(feature_cols)}")
-        self._log(f"Query vector: {[round(q,1) for q in query]}")
+        self._log(f"Query vector: {[round(q, 1) for q in query]}")
         self._log("─" * 40)
-        self._log(f"{'#':<4} {'Student':<22} {'Distance':>10}  {'Mark':>6}  {'Weight':>8}")
-        self._log("─" * 40)
-        total_w = sum(1 / (d + 1e-5) for d, _, _ in neighbours)
-        for rank, (dist, mark, idx) in enumerate(neighbours, 1):
-            w = (1 / (dist + 1e-5)) / total_w * 100
-            self._log(f"{rank:<4} {train_names[idx]:<22} {dist:>10.3f}  {mark:>6.1f}  {w:>7.1f}%")
+
+        if algo == "KNN":
+            neighbours  = extras["neighbours"]
+            train_names = extras["train_names"]
+            self._log(f"k           : {k}")
+            self._log(f"{'#':<4} {'Student':<22} {'Distance':>10}  {'Mark':>6}  {'Weight':>8}")
+            self._log("─" * 40)
+            total_w = sum(1 / (d + 1e-5) for d, _, _ in neighbours)
+            for rank, (dist, mark, idx) in enumerate(neighbours, 1):
+                w = (1 / (dist + 1e-5)) / total_w * 100
+                self._log(f"{rank:<4} {train_names[idx]:<22} {dist:>10.3f}  {mark:>6.1f}  {w:>7.1f}%")
+
+        elif algo == "Linear Regression":
+            coefficients = extras["coefficients"]
+            intercept    = extras["intercept"]
+            self._log(f"Intercept   : {round(intercept, 4)}")
+            self._log("Coefficients:")
+            for fc, coef in zip(feature_cols, coefficients):
+                self._log(f"  {fc:<20} : {round(coef, 4)}")
+            self._log("")
+            equation = f"  {round(intercept,2)}"
+            for fc, coef in zip(feature_cols, coefficients):
+                equation += f" + {round(coef,2)}×{fc}"
+            self._log(f"Equation: ŷ = {equation}")
+
+        elif algo == "Decision Tree":
+            tree_desc = extras["tree_desc"]
+            self._log(f"Max depth   : {self.dt_depth_var.get()}")
+            self._log("Tree structure:")
+            for line in tree_desc:
+                self._log("  " + line)
+
         self._log("─" * 40)
         self._log(f"Predicted mark  : {prediction}")
         self._log(f"Class average   : {class_avg}")
         self._log(f"Difference      : {round(prediction - class_avg, 1):+}")
         self._log("─" * 40)
         self._log("✓ Prediction complete. Run [ EXPORT CSV ] to save.")
-        self._set_status(f"Predicted {col} for {name}: {prediction}  |  Class avg: {class_avg}")
+        self._set_status(f"[{algo}] Predicted {col} for {name}: {prediction}  |  Class avg: {class_avg}")
 
     def _predict_all(self):
-        """Run KNN predictions for every missing mark in the dataset."""
+        """Run predictions for every missing mark using the selected algorithm."""
         if not self.missing:
             messagebox.showwarning("No Data", "Load a CSV file with missing marks first.")
             return
 
-        k = self.k_var.get()
+        k    = self.k_var.get()
+        algo = self.algo_var.get()
         succeeded, failed = [], []
 
         self._clear_log()
         self._log(f"═══ PREDICT ALL — {len(self.missing)} missing mark(s) ═══")
-        self._log(f"k = {k}")
+        self._log(f"Algorithm : {algo}")
+        if algo == "KNN":
+            self._log(f"k         : {k}")
+        elif algo == "Decision Tree":
+            self._log(f"Max depth : {self.dt_depth_var.get()}")
         self._log("─" * 50)
 
         for row_i, name, col in self.missing:
             try:
-                prediction, neighbours, train_names, feature_cols, query, class_avg = \
-                    self._run_single_prediction(row_i, name, col, k)
+                result = self._run_single_prediction(row_i, name, col, k)
+                prediction = result["prediction"]
+                class_avg  = result["class_avg"]
+                extras     = result["extras"]
 
-                # Write prediction into data
                 self.rows[row_i][col] = str(prediction)
-                self.last_prediction = (row_i, col, prediction)
+                self.last_prediction  = (row_i, col, prediction)
                 succeeded.append((name, col, prediction, class_avg))
 
-                # Log summary for this prediction
                 self._log(f"✓  {name:<22}  {col:<18}  → {prediction:>5}  (class avg: {class_avg})")
 
-                # Log neighbour detail
-                total_w = sum(1 / (d + 1e-5) for d, _, _ in neighbours)
-                for rank, (dist, mark, idx) in enumerate(neighbours, 1):
-                    w = (1 / (dist + 1e-5)) / total_w * 100
-                    self._log(f"     [{rank}] {train_names[idx]:<20} dist={dist:.2f}  mark={mark:.1f}  wt={w:.1f}%")
+                # Algorithm-specific neighbour/detail log
+                if algo == "KNN":
+                    neighbours  = extras["neighbours"]
+                    train_names = extras["train_names"]
+                    total_w = sum(1 / (d + 1e-5) for d, _, _ in neighbours)
+                    for rank, (dist, mark, idx) in enumerate(neighbours, 1):
+                        w = (1 / (dist + 1e-5)) / total_w * 100
+                        self._log(f"     [{rank}] {train_names[idx]:<20} dist={dist:.2f}  mark={mark:.1f}  wt={w:.1f}%")
+                elif algo == "Linear Regression":
+                    self._log(f"     intercept={round(extras['intercept'],2)}  "
+                              f"coefs={[round(c,2) for c in extras['coefficients']]}")
+                elif algo == "Decision Tree":
+                    self._log(f"     tree depth={self.dt_depth_var.get()}")
                 self._log("")
 
             except ValueError as e:
@@ -785,18 +1070,16 @@ class MarkPredictorApp(tk.Tk):
                 self._log(f"✗  {name:<22}  {col:<18}  → SKIPPED: {e}")
                 self._log("")
 
-        # Summary
         self._log("─" * 50)
         self._log(f"Complete: {len(succeeded)} predicted, {len(failed)} skipped.")
         self._log("Run [ EXPORT CSV ] to save all results.")
 
-        # Update result display with summary
         if succeeded:
             summary = "\n".join(f"  {name}  →  {col}: {pred}" for name, col, pred, _ in succeeded)
             self.result_var.set(f"{len(succeeded)}/{len(self.missing)}")
-            self.result_sub_var.set(f"All predictions complete:\n{summary}")
+            self.result_sub_var.set(f"[{algo}] All predictions complete:\n{summary}")
             self.student_info_var.set(
-                f"Predicted {len(succeeded)} mark(s):\n" +
+                f"Predicted {len(succeeded)} mark(s) using {algo}:\n" +
                 "\n".join(f"  {name}  →  {col}: {pred}  (class avg: {avg})"
                           for name, col, pred, avg in succeeded)
             )
@@ -804,10 +1087,10 @@ class MarkPredictorApp(tk.Tk):
         if failed:
             skipped = "\n".join(f"• {n} → {c}" for n, c, _ in failed)
             messagebox.showwarning("Some Skipped",
-                                   f"{len(failed)} prediction(s) skipped (insufficient data):\n{skipped}")
+                                   f"{len(failed)} prediction(s) skipped:\n{skipped}")
 
         self._set_status(
-            f"Predict All complete — {len(succeeded)} predicted, {len(failed)} skipped."
+            f"[{algo}] Predict All — {len(succeeded)} predicted, {len(failed)} skipped."
         )
 
     def _export(self):
