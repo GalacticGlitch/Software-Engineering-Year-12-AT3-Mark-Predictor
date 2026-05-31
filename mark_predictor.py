@@ -491,13 +491,28 @@ class MarkPredictorApp(tk.Tk):
         algo_frame = tk.Frame(ac, bg=T["CARD_BG"])
         algo_frame.pack(anchor='w', padx=12, pady=(4, 8))
         self._all_widgets.append((algo_frame, "card"))
-        for algo in ["KNN", "Linear Regression", "Decision Tree"]:
+        algo_tooltips = {
+            "KNN": (
+                "K-Nearest Neighbours - finds the k most similar students "
+                "and averages their marks to make a prediction."
+            ),
+            "Linear Regression": (
+                "Linear Regression - draws a line of best fit through the data "
+                "and uses it to estimate the missing mark mathematically."
+            ),
+            "Decision Tree": (
+                "Decision Tree - asks a series of yes/no questions about a "
+                "student's marks to narrow down a predicted value."
+            ),
+        }
+        for algo, tip in algo_tooltips.items():
             rb = tk.Radiobutton(algo_frame, text=algo, variable=self.algo_var,
                                 value=algo, font=FONTS["FONT_LBL"],
                                 bg=T["CARD_BG"], fg=T["TEXT"],
                                 selectcolor=T["DARK_BG"], activebackground=T["CARD_BG"],
                                 command=self._on_algo_change)
             rb.pack(anchor='w', padx=4, pady=1)
+            self._add_tooltip(rb, tip)
             self._all_widgets.append((rb, "radiobutton"))
             self._algo_radios.append(rb)
 
@@ -649,8 +664,9 @@ class MarkPredictorApp(tk.Tk):
     def _toggle_theme(self):
         self._current_theme = "light" if self._current_theme == "dark" else "dark"
         T.update(THEMES[self._current_theme])
+        # Button always shows what you'll switch TO next click
         self._theme_btn.config(
-            text="🌙 Dark" if self._current_theme == "light" else "☀ Light",
+            text="☀ Light" if self._current_theme == "dark" else "🌙 Dark",
             bg=T["ACCENT2"], fg=T["DARK_BG"]
         )
         self._apply_theme()
@@ -671,8 +687,7 @@ class MarkPredictorApp(tk.Tk):
         """Re-apply current theme colours and fonts to every tracked widget."""
         self.configure(bg=T["DARK_BG"])
         self._header_frame.configure(bg=T["PANEL_BG"])
-        self._title_lbl.configure(bg=T["PANEL_BG"], fg=T["TEXT"],    font=FONTS["FONT_HEAD"])
-        self._sub_lbl.configure(  bg=T["PANEL_BG"], fg=T["SUBTEXT"], font=FONTS["FONT_SUB"])
+        self._title_lbl.configure(bg=T["PANEL_BG"], fg=T["TEXT"], font=FONTS["FONT_HEAD"])
         self._acc_frame.configure(bg=T["PANEL_BG"])
         self._accent_line.configure(bg=T["ACCENT"])
         self._body.configure(bg=T["DARK_BG"])
