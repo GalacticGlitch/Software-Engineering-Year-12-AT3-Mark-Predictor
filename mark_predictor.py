@@ -664,9 +664,8 @@ class MarkPredictorApp(tk.Tk):
     def _toggle_theme(self):
         self._current_theme = "light" if self._current_theme == "dark" else "dark"
         T.update(THEMES[self._current_theme])
-        # Button always shows what you'll switch TO next click
         self._theme_btn.config(
-            text="☀ Light" if self._current_theme == "dark" else "🌙 Dark",
+            text="🌙 Dark" if self._current_theme == "light" else "☀ Light",
             bg=T["ACCENT2"], fg=T["DARK_BG"]
         )
         self._apply_theme()
@@ -929,7 +928,8 @@ class MarkPredictorApp(tk.Tk):
         if algo == "KNN":
             prediction, neighbours = knn_predict(train_X, train_y, query, k=k)
             prediction = max(0, min(100, prediction))
-            extras = {"neighbours": neighbours, "train_names": train_names}
+            extras = {"neighbours": neighbours, "train_names": train_names,
+                      "train_X": train_X}
 
         elif algo == "Linear Regression":
             prediction, coefficients, intercept = linear_regression_predict(
@@ -941,7 +941,7 @@ class MarkPredictorApp(tk.Tk):
             max_depth = self.dt_depth_var.get()
             prediction, tree_root, tree_desc = decision_tree_predict(
                 train_X, train_y, query, feature_cols, max_depth=max_depth)
-            extras = {"tree_desc": tree_desc}
+            extras = {"tree_desc": tree_desc, "tree_root": tree_root}
 
         return {
             "prediction": prediction,
@@ -952,6 +952,81 @@ class MarkPredictorApp(tk.Tk):
             "train_names": train_names,
             "extras": extras,
         }
+
+    def _log_mark_influence(self, algo, feature_cols, query, extras):
+        """
+        Log a plain-English breakdown of how each of the student's
+        own known marks influenced the predicted result.
+        """
+        self._log("")
+        self._log("── HOW THIS STUDENT'S MARKS INFLUENCED THE PREDICTION ──")
+
+        if algo == "KNN":
+            neighbours = extras["neighbours"]
+            train_X    = extras.get("train_X", [])
+            self._log(f"{'Mark':<22} {'Your value':>12}  {'Neighbour avg':>14}  {'Difference':>11}")
+            self._log("─" * 64)
+            for j, fc in enumerate(feature_cols):
+                sv  = query[j]
+                nav = round(
+                    sum(train_X[idx][j] for _, _, idx in neighbours) / len(neighbours), 1
+                ) if train_X else sv
+                diff  = round(sv - nav, 1)
+                arrow = "↑" if diff > 0 else ("↓" if diff < 0 else "=")
+                self._log(f"{fc:<22} {sv:>12.1f}  {nav:>14.1f}  {diff:>+10.1f} {arrow}")
+            self._log("")
+            self._log("↑ Your mark is above the neighbour avg → pulled prediction up.")
+            self._log("↓ Your mark is below the neighbour avg → pulled prediction down.")
+
+        elif algo == "Linear Regression":
+            coefficients = extras["coefficients"]
+            intercept    = extras["intercept"]
+            total = intercept
+            self._log(f"  {'Mark':<22} {'Your value':>10}  {'Coefficient':>12}  {'Contribution':>13}")
+            self._log("  " + "─" * 62)
+            self._log(f"  {'(intercept)':<22} {'':>10}  {'':>12}  {round(intercept,2):>13.2f}")
+            for fc, coef, val in zip(feature_cols, coefficients, query):
+                contrib = coef * val
+                total  += contrib
+                direction = "↑" if contrib > 0 else ("↓" if contrib < 0 else "=")
+                self._log(
+                    f"  {fc:<22} {val:>10.1f}  {coef:>12.4f}  "
+                    f"{contrib:>+12.2f} {direction}"
+                )
+            self._log("  " + "─" * 62)
+            self._log(f"  {'Total (= prediction)':<22} {'':>10}  {'':>12}  {round(total,2):>13.2f}")
+            self._log("")
+            self._log("  Contribution = your mark × coefficient.")
+            self._log("  A positive coefficient means higher marks push the prediction up.")
+            self._log("  A negative coefficient means higher marks push the prediction down.")
+
+        elif algo == "Decision Tree":
+            tree_root    = extras.get("tree_root")
+            if tree_root is None:
+                self._log("  (tree path not available)")
+                return
+            # Walk the tree and record each decision
+            self._log("  Decision path through the tree for this student:")
+            self._log("")
+            node  = tree_root
+            depth = 0
+            while not node.is_leaf():
+                fname = (feature_cols[node.feature_idx]
+                         if node.feature_idx < len(feature_cols)
+                         else f"F{node.feature_idx}")
+                val       = query[node.feature_idx]
+                threshold = node.threshold
+                went_left = val <= threshold
+                direction = "YES  →  go left" if went_left else "NO   →  go right"
+                self._log(
+                    f"  {'  ' * depth}Q: Is {fname} ≤ {threshold:.1f}?  "
+                    f"(Your value: {val:.1f})  {direction}"
+                )
+                node  = node.left if went_left else node.right
+                depth += 1
+            self._log(f"  {'  ' * depth}→ Leaf reached: predict {node.value}")
+            self._log("")
+            self._log("  Each question was answered using this student's own marks.")
 
     def _predict(self):
         if not self.selected_missing:
@@ -1025,6 +1100,7 @@ class MarkPredictorApp(tk.Tk):
             for line in tree_desc:
                 self._log("  " + line)
 
+        self._log_mark_influence(algo, feature_cols, query, extras)
         self._log("─" * 40)
         self._log(f"Predicted mark  : {prediction}")
         self._log(f"Class average   : {class_avg}")
