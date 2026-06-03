@@ -1,4 +1,8 @@
 # Software Engineering Year 12 - Assessment Task 3 - Mark Predictor
+
+## Requirements:
+- Install sklearn via the command: "pip install scikit-learn"
+
 ## Instructions:
 1. Import data file (CSV only)
 2. Select the marks you want to be predicted (or at the end click predict all marks and it will do so)

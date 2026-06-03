@@ -2,208 +2,63 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import csv
 import os
-import math
 from datetime import datetime
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor, export_text
 
 
 # ─────────────────────────────────────────────
-#  KNN MODEL (no external ML libraries needed)
+#  ML MODEL WRAPPERS
 # ─────────────────────────────────────────────
-
-def euclidean_distance(a, b):
-    """Calculate Euclidean distance between two feature vectors."""
-    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
-
 
 def knn_predict(train_X, train_y, query, k=5):
     """
-    K-Nearest Neighbours regression prediction.
-    Returns predicted value and the k nearest neighbours used.
+    K-Nearest Neighbours regression via sklearn.
+    Returns (prediction, neighbour indices+distances for logging).
     """
-    distances = []
-    for i, features in enumerate(train_X):
-        dist = euclidean_distance(features, query)
-        distances.append((dist, train_y[i], i))
+    model = KNeighborsRegressor(n_neighbors=k, weights='distance')
+    model.fit(train_X, train_y)
+    prediction = round(float(model.predict([query])[0]), 1)
 
-    distances.sort(key=lambda x: x[0])
-    neighbours = distances[:k]
+    # Get neighbour info for the analysis log
+    distances, indices = model.kneighbors([query])
+    neighbours = [
+        (distances[0][i], train_y[indices[0][i]], indices[0][i])
+        for i in range(k)
+    ]
+    return prediction, neighbours
 
-    # Weighted average: closer neighbours have more influence
-    total_weight = 0
-    weighted_sum = 0
-    for dist, mark, idx in neighbours:
-        weight = 1 / (dist + 1e-5)  # avoid division by zero
-        weighted_sum += weight * mark
-        total_weight += weight
-
-    prediction = weighted_sum / total_weight
-    return round(prediction, 1), neighbours
-
-
-# ─────────────────────────────────────────────
-#  LINEAR REGRESSION (from scratch)
-# ─────────────────────────────────────────────
 
 def linear_regression_predict(train_X, train_y, query):
     """
-    Multivariate Linear Regression using the Normal Equation:
-        w = (X^T X)^-1 X^T y
+    Linear Regression via sklearn.
     Returns (prediction, coefficients, intercept).
     """
-    n = len(train_X)
-    p = len(train_X[0])
-
-    # Add bias column (intercept) — prepend 1 to each row
-    X = [[1.0] + list(row) for row in train_X]
-    q = [1.0] + list(query)
-
-    # X^T X  (shape: (p+1) x (p+1))
-    def mat_mul(A, B):
-        rows_A, cols_A = len(A), len(A[0])
-        cols_B = len(B[0])
-        return [[sum(A[i][k] * B[k][j] for k in range(cols_A))
-                 for j in range(cols_B)] for i in range(rows_A)]
-
-    def transpose(M):
-        return [[M[j][i] for j in range(len(M))] for i in range(len(M[0]))]
-
-    def mat_vec(M, v):
-        return [sum(M[i][j] * v[j] for j in range(len(v))) for i in range(len(M))]
-
-    def gauss_jordan_inverse(M):
-        """Invert a square matrix via Gauss-Jordan elimination."""
-        n = len(M)
-        aug = [M[i][:] + [1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
-        for col in range(n):
-            # Pivot
-            max_row = max(range(col, n), key=lambda r: abs(aug[r][col]))
-            aug[col], aug[max_row] = aug[max_row], aug[col]
-            if abs(aug[col][col]) < 1e-12:
-                raise ValueError("Matrix is singular — cannot invert (features may be perfectly correlated).")
-            pivot = aug[col][col]
-            aug[col] = [v / pivot for v in aug[col]]
-            for r in range(n):
-                if r != col:
-                    factor = aug[r][col]
-                    aug[r] = [aug[r][c] - factor * aug[col][c] for c in range(2 * n)]
-        return [row[n:] for row in aug]
-
-    Xt = transpose(X)
-    XtX = mat_mul(Xt, X)
-    Xty = mat_vec(Xt, train_y)
-
-    try:
-        XtX_inv = gauss_jordan_inverse(XtX)
-    except ValueError:
-        # Fallback: simple mean if singular
-        return round(sum(train_y) / len(train_y), 1), [], 0.0
-
-    weights = mat_vec(XtX_inv, Xty)   # [intercept, w1, w2, ...]
-    intercept = weights[0]
-    coefficients = weights[1:]
-    prediction = sum(w * v for w, v in zip(weights, q))
+    model = LinearRegression()
+    model.fit(train_X, train_y)
+    prediction = round(float(model.predict([query])[0]), 1)
     prediction = max(0.0, min(100.0, prediction))
-    return round(prediction, 1), coefficients, intercept
-
-
-# ─────────────────────────────────────────────
-#  DECISION TREE (from scratch)
-# ─────────────────────────────────────────────
-
-class DTNode:
-    """A node in the Decision Tree."""
-    def __init__(self):
-        self.feature_idx = None
-        self.threshold   = None
-        self.left        = None
-        self.right       = None
-        self.value       = None   # set for leaf nodes
-
-    def is_leaf(self):
-        return self.value is not None
-
-
-def _dt_mse(y):
-    if not y:
-        return 0.0
-    mean = sum(y) / len(y)
-    return sum((v - mean) ** 2 for v in y) / len(y)
-
-
-def _dt_best_split(X, y):
-    best_mse, best_feat, best_thresh = float('inf'), None, None
-    n = len(y)
-    for feat in range(len(X[0])):
-        values = sorted(set(row[feat] for row in X))
-        thresholds = [(values[i] + values[i+1]) / 2 for i in range(len(values) - 1)]
-        for thresh in thresholds:
-            left_y  = [y[i] for i in range(n) if X[i][feat] <= thresh]
-            right_y = [y[i] for i in range(n) if X[i][feat] >  thresh]
-            if not left_y or not right_y:
-                continue
-            mse = (len(left_y) * _dt_mse(left_y) + len(right_y) * _dt_mse(right_y)) / n
-            if mse < best_mse:
-                best_mse, best_feat, best_thresh = mse, feat, thresh
-    return best_feat, best_thresh
-
-
-def _dt_build(X, y, depth, max_depth, min_samples):
-    node = DTNode()
-    if depth >= max_depth or len(y) <= min_samples or len(set(y)) == 1:
-        node.value = round(sum(y) / len(y), 1)
-        return node
-    feat, thresh = _dt_best_split(X, y)
-    if feat is None:
-        node.value = round(sum(y) / len(y), 1)
-        return node
-    node.feature_idx = feat
-    node.threshold   = thresh
-    left_idx  = [i for i in range(len(y)) if X[i][feat] <= thresh]
-    right_idx = [i for i in range(len(y)) if X[i][feat] >  thresh]
-    node.left  = _dt_build([X[i] for i in left_idx],  [y[i] for i in left_idx],
-                            depth + 1, max_depth, min_samples)
-    node.right = _dt_build([X[i] for i in right_idx], [y[i] for i in right_idx],
-                            depth + 1, max_depth, min_samples)
-    return node
-
-
-def _dt_predict_one(node, x):
-    if node.is_leaf():
-        return node.value
-    if x[node.feature_idx] <= node.threshold:
-        return _dt_predict_one(node.left, x)
-    return _dt_predict_one(node.right, x)
-
-
-def _dt_describe(node, feature_cols, depth=0, lines=None):
-    """Recursively build a human-readable tree description."""
-    if lines is None:
-        lines = []
-    indent = "  " * depth
-    if node.is_leaf():
-        lines.append(f"{indent}→ Predict: {node.value}")
-    else:
-        fname = feature_cols[node.feature_idx] if node.feature_idx < len(feature_cols) else f"F{node.feature_idx}"
-        lines.append(f"{indent}Split: {fname} ≤ {node.threshold:.1f}")
-        lines.append(f"{indent}  [yes]")
-        _dt_describe(node.left,  feature_cols, depth + 2, lines)
-        lines.append(f"{indent}  [no]")
-        _dt_describe(node.right, feature_cols, depth + 2, lines)
-    return lines
+    return prediction, list(model.coef_), float(model.intercept_)
 
 
 def decision_tree_predict(train_X, train_y, query, feature_cols,
                           max_depth=4, min_samples=2):
     """
-    Build a Decision Tree on training data and predict for query.
-    Returns (prediction, tree_root, tree_description_lines).
+    Decision Tree regression via sklearn.
+    Returns (prediction, model, tree_description_lines).
     """
-    root = _dt_build(train_X, train_y, depth=0,
-                     max_depth=max_depth, min_samples=min_samples)
-    raw = _dt_predict_one(root, query)
-    prediction = max(0.0, min(100.0, raw))
-    desc = _dt_describe(root, feature_cols)
-    return round(prediction, 1), root, desc
+    model = DecisionTreeRegressor(max_depth=max_depth,
+                                  min_samples_leaf=min_samples)
+    model.fit(train_X, train_y)
+    prediction = round(float(model.predict([query])[0]), 1)
+    prediction = max(0.0, min(100.0, prediction))
+
+    # Human-readable tree structure
+    tree_text = export_text(model, feature_names=feature_cols)
+    tree_lines = tree_text.strip().split('\n')
+
+    return prediction, model, tree_lines
 
 
 # ─────────────────────────────────────────────
@@ -1001,30 +856,32 @@ class MarkPredictorApp(tk.Tk):
             self._log("  A negative coefficient means higher marks push the prediction down.")
 
         elif algo == "Decision Tree":
-            tree_root    = extras.get("tree_root")
-            if tree_root is None:
+            model = extras.get("tree_root")  # sklearn model stored here
+            if model is None:
                 self._log("  (tree path not available)")
                 return
-            # Walk the tree and record each decision
+            import numpy as np
+            node_indicator = model.decision_path(np.array([query]))
+            node_ids = node_indicator.indices
+            tree = model.tree_
             self._log("  Decision path through the tree for this student:")
             self._log("")
-            node  = tree_root
             depth = 0
-            while not node.is_leaf():
-                fname = (feature_cols[node.feature_idx]
-                         if node.feature_idx < len(feature_cols)
-                         else f"F{node.feature_idx}")
-                val       = query[node.feature_idx]
-                threshold = node.threshold
-                went_left = val <= threshold
+            for node_id in node_ids[:-1]:  # exclude the leaf
+                feat  = tree.feature[node_id]
+                thresh = round(tree.threshold[node_id], 1)
+                val   = query[feat]
+                fname = feature_cols[feat] if feat < len(feature_cols) else f"F{feat}"
+                went_left = val <= thresh
                 direction = "YES  →  go left" if went_left else "NO   →  go right"
                 self._log(
-                    f"  {'  ' * depth}Q: Is {fname} ≤ {threshold:.1f}?  "
+                    f"  {'  ' * depth}Q: Is {fname} ≤ {thresh}?  "
                     f"(Your value: {val:.1f})  {direction}"
                 )
-                node  = node.left if went_left else node.right
                 depth += 1
-            self._log(f"  {'  ' * depth}→ Leaf reached: predict {node.value}")
+            leaf_id = node_ids[-1]
+            leaf_val = round(tree.value[leaf_id][0][0], 1)
+            self._log(f"  {'  ' * depth}→ Leaf reached: predict {leaf_val}")
             self._log("")
             self._log("  Each question was answered using this student's own marks.")
 
