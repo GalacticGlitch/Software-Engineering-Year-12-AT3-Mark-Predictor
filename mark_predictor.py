@@ -341,12 +341,16 @@ class MarkPredictorApp(tk.Tk):
 
         # Algorithm selector card
         ac = self._card(parent, "③ ALGORITHM")
-        self.algo_var = tk.StringVar(value="KNN")
+        self.algo_var = tk.StringVar(value="Auto")
         self._algo_radios = []
         algo_frame = tk.Frame(ac, bg=T["CARD_BG"])
         algo_frame.pack(anchor='w', padx=12, pady=(4, 8))
         self._all_widgets.append((algo_frame, "card"))
         algo_tooltips = {
+            "Auto": (
+                "Automatically selects the best algorithm and settings "
+                "based on how much data is available."
+            ),
             "KNN": (
                 "K-Nearest Neighbours - finds the k most similar students "
                 "and averages their marks to make a prediction."
@@ -404,7 +408,8 @@ class MarkPredictorApp(tk.Tk):
                                 selectcolor=T["DARK_BG"], activebackground=T["CARD_BG"])
             rb.pack(side='left', padx=4)
             self._all_widgets.append((rb, "radiobutton"))
-        self._dt_card.pack_forget()  # hidden by default
+        self._dt_card.pack_forget()   # hidden by default
+        self._knn_card.pack_forget()  # hidden by default (Auto selected)
 
         self._predict_btn  = self._btn(parent, "[ PREDICT MARK ]", self._predict,
                                        color=T["SUCCESS"],
@@ -687,23 +692,45 @@ class MarkPredictorApp(tk.Tk):
         self.result_sub_var.set(f"Press [ PREDICT MARK ] to run {self.algo_var.get()} prediction.")
         self._set_status(f"Selected: {name} → {col}")
 
+    def _auto_select_algo(self):
+        """
+        Pick the best algorithm and settings based on dataset size.
+          < 10 students  → KNN k=3
+          10–20 students → KNN k=5
+          21–35 students → Linear Regression
+          > 35 students  → Decision Tree depth=4
+        Returns (algo_name, k, dt_depth).
+        """
+        n = len(self.rows)
+        if n < 10:
+            return "KNN", 3, 4
+        elif n <= 20:
+            return "KNN", 5, 4
+        elif n <= 35:
+            return "Linear Regression", 5, 4
+        else:
+            return "Decision Tree", 5, 4
+
     def _on_algo_change(self):
         """Show/hide settings cards based on selected algorithm."""
         algo = self.algo_var.get()
+
+        if algo == "Auto":
+            self._knn_card.pack_forget()
+            self._dt_card.pack_forget()
+            self._add_tooltip(self._predict_btn, f"Auto: selects the best algorithm based on data size")
+            return
+
         if algo == "KNN":
-            self._knn_card.pack(fill='x', pady=(0, 10),
-                                before=self._predict_btn)
+            self._knn_card.pack(fill='x', pady=(0, 10), before=self._predict_btn)
             self._dt_card.pack_forget()
         elif algo == "Decision Tree":
-            self._dt_card.pack(fill='x', pady=(0, 10),
-                               before=self._predict_btn)
+            self._dt_card.pack(fill='x', pady=(0, 10), before=self._predict_btn)
             self._knn_card.pack_forget()
         else:
-            # Linear Regression — no extra settings needed
             self._knn_card.pack_forget()
             self._dt_card.pack_forget()
 
-        # Update predict button tooltip
         tips = {
             "KNN": "Predict using K-Nearest Neighbours",
             "Linear Regression": "Predict using Linear Regression",
@@ -750,7 +777,14 @@ class MarkPredictorApp(tk.Tk):
             train_y.append(y_val)
             train_names.append(row.get('Name', f'Row {i}'))
 
-        min_needed = k if self.algo_var.get() == "KNN" else 3
+        algo = self.algo_var.get()
+        if algo == "Auto":
+            algo, k, dt_depth = self._auto_select_algo()
+        else:
+            dt_depth = self.dt_depth_var.get()
+        extras = {}
+
+        min_needed = k if algo == "KNN" else 3
         if len(train_X) < min_needed:
             raise ValueError(
                 f"Need at least {min_needed} students with a known '{col}' mark. "
@@ -777,9 +811,6 @@ class MarkPredictorApp(tk.Tk):
                 all_vals.append(parsed)
         class_avg = round(sum(all_vals) / len(all_vals), 1) if all_vals else 0
 
-        algo = self.algo_var.get()
-        extras = {}
-
         if algo == "KNN":
             prediction, neighbours = knn_predict(train_X, train_y, query, k=k)
             prediction = max(0, min(100, prediction))
@@ -793,9 +824,8 @@ class MarkPredictorApp(tk.Tk):
                       "feature_cols": feature_cols}
 
         elif algo == "Decision Tree":
-            max_depth = self.dt_depth_var.get()
             prediction, tree_root, tree_desc = decision_tree_predict(
-                train_X, train_y, query, feature_cols, max_depth=max_depth)
+                train_X, train_y, query, feature_cols, max_depth=dt_depth)
             extras = {"tree_desc": tree_desc, "tree_root": tree_root}
 
         return {
@@ -1056,8 +1086,46 @@ class MarkPredictorApp(tk.Tk):
 
         self._log(f"\n✓ Exported to: {os.path.basename(out)}")
         self._set_status(f"Exported: {os.path.basename(out)}")
-        messagebox.showinfo("Export Successful",
-                            f"Updated CSV saved to:\n{out}")
+
+        # Custom export dialog with Open File option
+        dialog = tk.Toplevel(self)
+        dialog.title("Export Successful")
+        dialog.configure(bg=T["PANEL_BG"])
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        self.update_idletasks()
+        x = self.winfo_x() + self.winfo_width() // 2 - 200
+        y = self.winfo_y() + self.winfo_height() // 2 - 80
+        dialog.geometry(f"400x160+{x}+{y}")
+
+        tk.Label(dialog, text="✓  Export Successful", font=FONTS["FONT_BTN"],
+                 bg=T["PANEL_BG"], fg=T["SUCCESS"]).pack(pady=(18, 4))
+        tk.Label(dialog, text=os.path.basename(out), font=FONTS["FONT_LBL"],
+                 bg=T["PANEL_BG"], fg=T["SUBTEXT"], wraplength=360).pack(pady=(0, 14))
+
+        btn_frame = tk.Frame(dialog, bg=T["PANEL_BG"])
+        btn_frame.pack()
+
+        def open_file():
+            import subprocess, sys
+            if sys.platform == "win32":
+                os.startfile(out)
+            elif sys.platform == "darwin":
+                subprocess.call(["open", out])
+            else:
+                subprocess.call(["xdg-open", out])
+            dialog.destroy()
+
+        tk.Button(btn_frame, text="Open File", font=FONTS["FONT_BTN"],
+                  bg=T["ACCENT"], fg=T["DARK_BG"], relief='flat',
+                  cursor='hand2', padx=16, pady=6,
+                  command=open_file).pack(side='left', padx=8)
+
+        tk.Button(btn_frame, text="Close", font=FONTS["FONT_BTN"],
+                  bg=T["CARD_BG"], fg=T["TEXT"], relief='flat',
+                  cursor='hand2', padx=16, pady=6,
+                  command=dialog.destroy).pack(side='left', padx=8)
 
 
 # ─────────────────────────────────────────────
