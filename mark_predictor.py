@@ -555,11 +555,9 @@ class MarkPredictorApp(tk.Tk):
         self._status_lbl.configure(bg=T["PANEL_BG"], fg=T["SUBTEXT"], font=FONTS["FONT_STAT"])
 
         # Accessibility buttons
-        for btn, lbl_text in [
-            (self._font_up_btn,   "A+"),
-            (self._font_down_btn, "A−"),
-        ]:
+        for btn in [self._font_up_btn, self._font_down_btn]:
             btn.configure(bg=T["CARD_BG"], fg=T["TEXT"], font=FONTS["FONT_BTN"])
+        self._theme_btn.configure(bg=T["ACCENT2"], fg=T["DARK_BG"], font=FONTS["FONT_BTN"])
 
         # Main action buttons
         self._load_btn.configure(      bg=T["ACCENT"],  fg=T["DARK_BG"], font=FONTS["FONT_BTN"])
