@@ -98,11 +98,8 @@ def validate_mark(value, col_name):
         return False, f"'{value}' is not a valid mark for {col_name} (must be 0–100)"
 
 
-def export_csv(filepath, headers, rows):
-    """Write updated rows back to a new CSV file."""
-    base, ext = os.path.splitext(filepath)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    out_path = f"{base}_predicted_{timestamp}{ext}"
+def export_csv(out_path, headers, rows):
+    """Write updated rows to the given path."""
     with open(out_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=headers)
         writer.writeheader()
@@ -1078,8 +1075,23 @@ class MarkPredictorApp(tk.Tk):
         if self.last_prediction is None:
             messagebox.showwarning("No Prediction", "Run at least one prediction before exporting.")
             return
+
+        # Ask user where to save
+        base, ext = os.path.splitext(os.path.basename(self.filepath))
+        from datetime import datetime
+        default_name = f"{base}_predicted_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+        out_path = filedialog.asksaveasfilename(
+            title="Save predicted CSV",
+            initialfile=default_name,
+            initialdir=os.path.dirname(self.filepath),
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        if not out_path:
+            return  # user cancelled
+
         try:
-            out = export_csv(self.filepath, self.headers, self.rows)
+            out = export_csv(out_path, self.headers, self.rows)
         except Exception as e:
             messagebox.showerror("Export Error", f"Could not save file:\n{e}")
             return
