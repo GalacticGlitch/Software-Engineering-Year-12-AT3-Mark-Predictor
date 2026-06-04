@@ -7,7 +7,7 @@
 1. Import data file (CSV only)
 2. Select the marks you want to be predicted (or at the end click predict all marks and it will do so)
 3. Select the ML algorithm you would like to use for the prediction (for most use-cases pick auto)
-4. Select the setting for the algorithm (except for linear regression)
+4. Select the setting for the algorithm (unless using auto)
 5. Predict the earlier selected mark or predict all marks
 6. Export the results into a CSV file
 
