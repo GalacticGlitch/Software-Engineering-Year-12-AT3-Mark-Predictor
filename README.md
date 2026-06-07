@@ -1,9 +1,9 @@
 # Software Engineering Year 12 - Assessment Task 3 - Mark Predictor
 
-## Requirements:
+## Requirements
 - Install sklearn via the command: "pip install scikit-learn"
 
-## Instructions:
+## Instructions
 1. Import data file (CSV only)
 2. Select the marks you want to be predicted (or at the end click predict all marks and it will do so)
 3. Select the ML algorithm you would like to use for the prediction (for most use-cases pick auto)
@@ -16,3 +16,5 @@
 - Option to increase/decrease font size
 - Tooltips on hover
 - Auto predictor algorithm mode
+- You can choose what to name and where to save the exported CSV
+- CSV is openable straight from the app after saving
