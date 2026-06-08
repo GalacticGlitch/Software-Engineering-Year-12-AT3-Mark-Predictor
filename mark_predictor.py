@@ -1,3 +1,5 @@
+# Yes, there are warnings but the program works, so "If it ain't broke don't fix it"
+
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import csv
