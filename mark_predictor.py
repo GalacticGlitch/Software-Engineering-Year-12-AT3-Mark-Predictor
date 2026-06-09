@@ -8,19 +8,20 @@ from datetime import datetime
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor, export_text
+import numpy as np
 
 
 # ─────────────────────────────────────────────
 #  ML MODEL WRAPPERS
 # ─────────────────────────────────────────────
 
-def knn_predict(train_X, train_y, query, k=5):
+def knn_predict(train_x, train_y, query, k=5):
     """
     K-Nearest Neighbours regression via sklearn.
     Returns (prediction, neighbour indices+distances for logging).
     """
     model = KNeighborsRegressor(n_neighbors=k, weights='distance')
-    model.fit(train_X, train_y)
+    model.fit(train_x, train_y)
     prediction = round(float(model.predict([query])[0]), 1)
 
     # Get neighbour info for the analysis log
@@ -32,19 +33,19 @@ def knn_predict(train_X, train_y, query, k=5):
     return prediction, neighbours
 
 
-def linear_regression_predict(train_X, train_y, query):
+def linear_regression_predict(train_x, train_y, query):
     """
     Linear Regression via sklearn.
     Returns (prediction, coefficients, intercept).
     """
     model = LinearRegression()
-    model.fit(train_X, train_y)
+    model.fit(train_x, train_y)
     prediction = round(float(model.predict([query])[0]), 1)
     prediction = max(0.0, min(100.0, prediction))
     return prediction, list(model.coef_), float(model.intercept_)
 
 
-def decision_tree_predict(train_X, train_y, query, feature_cols,
+def decision_tree_predict(train_x, train_y, query, feature_cols,
                           max_depth=4, min_samples=2):
     """
     Decision Tree regression via sklearn.
@@ -52,7 +53,7 @@ def decision_tree_predict(train_X, train_y, query, feature_cols,
     """
     model = DecisionTreeRegressor(max_depth=max_depth,
                                   min_samples_leaf=min_samples)
-    model.fit(train_X, train_y)
+    model.fit(train_x, train_y)
     prediction = round(float(model.predict([query])[0]), 1)
     prediction = max(0.0, min(100.0, prediction))
 
@@ -752,7 +753,7 @@ class MarkPredictorApp(tk.Tk):
             target_features_raw.append(parsed if valid else None)
 
         # Build training set
-        train_X, train_y, train_names = [], [], []
+        train_x, train_y, train_names = [], [], []
         for i, row in enumerate(self.rows):
             if i == row_i:
                 continue
@@ -770,7 +771,7 @@ class MarkPredictorApp(tk.Tk):
                     features.append(target_features_raw[j])
                 else:
                     features.append(50.0)
-            train_X.append(features)
+            train_x.append(features)
             train_y.append(y_val)
             train_names.append(row.get('Name', f'Row {i}'))
 
@@ -782,10 +783,10 @@ class MarkPredictorApp(tk.Tk):
         extras = {}
 
         min_needed = k if algo == "KNN" else 3
-        if len(train_X) < min_needed:
+        if len(train_x) < min_needed:
             raise ValueError(
                 f"Need at least {min_needed} students with a known '{col}' mark. "
-                f"Only {len(train_X)} found."
+                f"Only {len(train_x)} found."
             )
 
         # Query vector
@@ -794,7 +795,7 @@ class MarkPredictorApp(tk.Tk):
             if target_features_raw[j] is not None:
                 query.append(target_features_raw[j])
             else:
-                vals = [train_X[r][j] for r in range(len(train_X))]
+                vals = [train_x[r][j] for r in range(len(train_x))]
                 query.append(sum(vals) / len(vals))
 
         # Class average
@@ -809,20 +810,20 @@ class MarkPredictorApp(tk.Tk):
         class_avg = round(sum(all_vals) / len(all_vals), 1) if all_vals else 0
 
         if algo == "KNN":
-            prediction, neighbours = knn_predict(train_X, train_y, query, k=k)
+            prediction, neighbours = knn_predict(train_x, train_y, query, k=k)
             prediction = max(0, min(100, prediction))
             extras = {"neighbours": neighbours, "train_names": train_names,
-                      "train_X": train_X}
+                      "train_x": train_x}
 
         elif algo == "Linear Regression":
             prediction, coefficients, intercept = linear_regression_predict(
-                train_X, train_y, query)
+                train_x, train_y, query)
             extras = {"coefficients": coefficients, "intercept": intercept,
                       "feature_cols": feature_cols}
 
         elif algo == "Decision Tree":
             prediction, tree_root, tree_desc = decision_tree_predict(
-                train_X, train_y, query, feature_cols, max_depth=dt_depth)
+                train_x, train_y, query, feature_cols, max_depth=dt_depth)
             extras = {"tree_desc": tree_desc, "tree_root": tree_root}
 
         return {
@@ -845,14 +846,14 @@ class MarkPredictorApp(tk.Tk):
 
         if algo == "KNN":
             neighbours = extras["neighbours"]
-            train_X    = extras.get("train_X", [])
+            train_x    = extras.get("train_x", [])
             self._log(f"{'Mark':<22} {'Your value':>12}  {'Neighbour avg':>14}  {'Difference':>11}")
             self._log("─" * 64)
             for j, fc in enumerate(feature_cols):
                 sv  = query[j]
                 nav = round(
-                    sum(train_X[idx][j] for _, _, idx in neighbours) / len(neighbours), 1
-                ) if train_X else sv
+                    sum(train_x[idx][j] for _, _, idx in neighbours) / len(neighbours), 1
+                ) if train_x else sv
                 diff  = round(sv - nav, 1)
                 arrow = "↑" if diff > 0 else ("↓" if diff < 0 else "=")
                 self._log(f"{fc:<22} {sv:>12.1f}  {nav:>14.1f}  {diff:>+10.1f} {arrow}")
@@ -887,7 +888,6 @@ class MarkPredictorApp(tk.Tk):
             if model is None:
                 self._log("  (tree path not available)")
                 return
-            import numpy as np
             node_indicator = model.decision_path(np.array([query]))
             node_ids = node_indicator.indices
             tree = model.tree_
@@ -1078,7 +1078,6 @@ class MarkPredictorApp(tk.Tk):
 
         # Ask user where to save
         base, ext = os.path.splitext(os.path.basename(self.filepath))
-        from datetime import datetime
         default_name = f"{base}_predicted_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
         out_path = filedialog.asksaveasfilename(
             title="Save predicted CSV",
