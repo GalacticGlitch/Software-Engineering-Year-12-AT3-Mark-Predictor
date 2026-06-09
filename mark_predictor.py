@@ -1,4 +1,4 @@
-# Yes, there are warnings but the program works, so "If it ain't broke don't fix it"
+# Yes, there are warnings (not errors) but the program works, so "If it ain't broke don't fix it" and yes I have tried to fix these warnings, but it actually breaks the code when I do.
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
